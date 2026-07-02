@@ -1,42 +1,31 @@
 import streamlit as st
-import pandas as pd
 from datetime import datetime
-import json
+import requests
+import base64
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-import io
+from streamlit_geolocation import streamlit_geolocation
 
 # =====================================================================
 # CONFIGURACIÓN DE CONEXIONES Y SEGURIDAD
 # =====================================================================
 
-# Configuración de los IDs de Google (Reemplazar con tus IDs reales o usar st.secrets)
 SPREADSHEET_ID = st.secrets["general"]["spreadsheet_id"]
-DRIVE_FOLDER_ID = st.secrets["general"]["drive_folder_id"]
+IMGBB_API_KEY = st.secrets["general"]["imgbb_api_key"]
 
 @st.cache_resource
 def inicializar_conexiones():
-    """Inicializa los servicios de Google usando las credenciales seguras."""
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    # Cargar credenciales desde los secretos de Streamlit
-    creds_dict = json.loads(st.secrets["textkey"])
+    """Inicializa la conexión con Google Sheets."""
+    scope = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds_dict = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    
-    # Clientes de API
     client_gspread = gspread.authorize(creds)
-    servicio_drive = build('drive', 'v3', credentials=creds)
-    
-    return client_gspread, servicio_drive
+    return client_gspread
 
 try:
-    gc, drive_service = inicializar_conexiones()
+    gc = inicializar_conexiones()
 except Exception as e:
-    st.error("Error de configuración en las credenciales de Google. Verifica tus Secrets.")
+    st.error(f"Error técnico de conexión: {e}")
     st.stop()
 
 # =====================================================================
@@ -49,78 +38,54 @@ st.markdown("---")
 
 # 1. Datos Generales
 st.subheader("1. Información del Frente de Trabajo")
-cuadrilla = st.selectbox("Seleccione la Cuadrilla", ["Cuadrilla 1 - Instalaciones", "Cuadrilla 2 - Montajes", "Cuadrilla 3 - Mantenimiento"])
-direccion = st.text_input("Proyecto / Dirección", placeholder="Ej: Hotel Aimarawa, San Antero / Proyecto Dosquebradas")
-
-# 2. Geolocalización mediante HTML5 en el Navegador
-st.markdown("### 2. Validación de Ubicación (GPS)")
-# Pequeño script inyectado para capturar coordenadas reales desde el celular
-componente_gps = """
-<p id="status">Buscando señal GPS...</p>
-<button onclick="getLocation()">📍 Validar Coordenadas</button>
-<script>
-var x = document.getElementById("status");
-function getLocation() {
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(showPosition, showError);
-  } else { 
-    x.innerHTML = "La geolocalización no es soportada por este navegador.";
-  }
-}
-function showPosition(position) {
-  x.innerHTML = position.coords.latitude + ", " + position.coords.longitude;
-  // Enviar datos de vuelta a Streamlit mediante la URL o almacenamiento local si es necesario
-  window.parent.postMessage({type: 'streamlit:setComponentValue', value: position.coords.latitude + "," + position.coords.longitude}, '*');
-}
-function showError(error) {
-  switch(error.code) {
-    case error.PERMISSION_DENIED:
-      x.innerHTML = "Usuario denegó el acceso al GPS."
-      break;
-    case error.POSITION_UNAVAILABLE:
-      x.innerHTML = "Ubicación no disponible."
-      break;
-    case error.TIMEOUT:
-      x.innerHTML = "Tiempo de espera agotado."
-      break;
-  }
-}
-</script>
-"""
-# Entrada manual o asistida para asegurar el registro si el navegador bloquea el script
-gps_coordenadas = st.text_input("Coordenadas Latitud, Longitud (Verifica que tu GPS esté encendido):", placeholder="Ej: 4.7486,-75.9124")
+cuadrilla = st.selectbox("Seleccione la Cuadrilla", [
+    "Cuadrilla 1 - Instalaciones", 
+    "Cuadrilla 2 - Montajes", 
+    "Cuadrilla 3 - Eje Cafetero / Mantenimiento"
+])
+direccion = st.text_input("Proyecto / Dirección", placeholder="Ej: Proyecto Dosquebradas, Hotel Aimarawa...")
 
 st.markdown("---")
 
-# 3. Control de Tiempos
-st.subheader("3. Registro de Horarios")
-col1, col2 = st.columns(2)
+# 2. Geolocalización Automática
+st.subheader("2. Validación de Ubicación (GPS)")
+st.write("Haz clic en el botón para capturar las coordenadas exactas:")
+
+ubicacion = streamlit_geolocation()
+gps_coordenadas = None
+
+if ubicacion['latitude'] is not None and ubicacion['longitude'] is not None:
+    # Convertimos las coordenadas en un enlace directo de Google Maps
+    gps_coordenadas = f"https://www.google.com/maps?q={ubicacion['latitude']},{ubicacion['longitude']}"
+    st.success("📍 Ubicación confirmada y convertida a enlace de mapa.")
+else:
+    st.info("Esperando captura de GPS... (Recuerda dar permisos de ubicación en tu navegador)")
+
+st.markdown("---")
+
+# 3. Evidencia Fotográfica y Registro de Hora Automático
+st.subheader("3. Evidencia y Registro de Tiempos")
+st.write("Al tomar la fotografía, el sistema registrará automáticamente la hora de llegada.")
 
 if 'hora_llegada' not in st.session_state:
     st.session_state['hora_llegada'] = None
 if 'hora_salida' not in st.session_state:
     st.session_state['hora_salida'] = None
 
-with col1:
-    if st.button("🟢 Registrar Llegada", use_container_width=True):
-        st.session_state['hora_llegada'] = datetime.now().strftime("%H:%M:%S")
-    if st.session_state['hora_llegada']:
-        st.success(f"Llegada registrada: {st.session_state['hora_llegada']}")
+foto = st.camera_input("Capturar fotografía del avance o estado del sitio", key="camara_evidencia")
 
-with col2:
-    if st.button("🔴 Registrar Salida", use_container_width=True):
-        st.session_state['hora_salida'] = datetime.now().strftime("%H:%M:%S")
-    if st.session_state['hora_salida']:
-        st.error(f"Salida registrada: {st.session_state['hora_salida']}")
+if foto:
+    if st.session_state['hora_llegada'] is None:
+        st.session_state['hora_llegada'] = datetime.now().strftime("%H:%M:%S")
+    st.success(f"📸 Evidencia capturada. Hora de llegada registrada: {st.session_state['hora_llegada']}")
 
 st.markdown("---")
 
-# 4. Registro Fotográfico
-st.subheader("4. Evidencia Fotográfica")
-foto = st.camera_input("Capturar fotografía del avance o estado del sitio")
-
-if foto:
-    st.image(foto, caption="Vista previa de la evidencia", use_container_width=True)
+# 4. Botón opcional de Salida
+st.write("¿Terminó el turno?")
+if st.button("🔴 Registrar Hora de Salida", use_container_width=True):
+    st.session_state['hora_salida'] = datetime.now().strftime("%H:%M:%S")
+    st.error(f"Salida registrada: {st.session_state['hora_salida']}")
 
 st.markdown("---")
 
@@ -129,31 +94,22 @@ st.markdown("---")
 # =====================================================================
 if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_container_width=True):
     if not direccion or not foto or not st.session_state['hora_llegada'] or not gps_coordenadas:
-        st.warning("⚠️ Datos incompletos. Se requiere: Dirección, Coordenadas GPS, Foto e ingresar la Hora de Llegada.")
+        st.warning("⚠️ Datos incompletos. Asegúrate de ingresar la dirección, tomar la foto y capturar el GPS.")
     else:
-        with st.spinner("Procesando y subiendo información a los servidores..."):
+        with st.spinner("Subiendo evidencia fotográfica y registrando datos..."):
             try:
-                # A. Subir la imagen a Google Drive
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                nombre_archivo = f"{cuadrilla.replace(' ', '_')}_{timestamp}.jpg"
-                
-                # Convertir el buffer de la foto para la API de Google
+                # A. Subir la imagen a ImgBB mediante API
                 foto_bytes = foto.getvalue()
-                fh = io.BytesIO(foto_bytes)
-                media = MediaIoBaseUpload(fh, mimetype='image/jpeg', resumable=True)
+                foto_base64 = base64.b64encode(foto_bytes).decode('utf-8')
                 
-                metadatos_archivo = {
-                    'name': nombre_archivo,
-                    'parents': [DRIVE_FOLDER_ID]
+                url_imgbb = "https://api.imgbb.com/1/upload"
+                payload = {
+                    "key": IMGBB_API_KEY,
+                    "image": foto_base64
                 }
                 
-                archivo_drive = drive_service.files().create(
-                    body=metadatos_archivo,
-                    media_body=media,
-                    fields='id, webViewLink'
-                ).execute()
-                
-                enlace_foto = archivo_drive.get('webViewLink')
+                respuesta_api = requests.post(url_imgbb, data=payload).json()
+                enlace_foto = respuesta_api["data"]["url"]
                 
                 # B. Escribir los registros en Google Sheets
                 hoja = gc.open_by_key(SPREADSHEET_ID).sheet1
@@ -171,7 +127,7 @@ if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_co
                 
                 hoja.append_row(fila_nueva)
                 
-                st.success("✅ ¡Reporte guardado exitosamente! La información ya está disponible en el Centro de Gestión.")
+                st.success("✅ ¡Reporte guardado exitosamente en el Centro de Gestión!")
                 
                 # Limpiar variables de tiempo para el próximo registro
                 st.session_state['hora_llegada'] = None
