@@ -45,47 +45,46 @@ cuadrilla = st.selectbox("Seleccione la Cuadrilla", [
 ])
 direccion = st.text_input("Proyecto / Dirección", placeholder="Ej: Proyecto Dosquebradas, Hotel Aimarawa...")
 
+# Nuevo Selector de Hito Operativo
+hito = st.selectbox("Seleccione el Hito Operativo", [
+    "🌅 Inicio de Jornada",
+    "🥪 Salida a Almuerzo",
+    "🔄 Regreso de Almuerzo",
+    "🛑 Fin de Jornada"
+])
+
 st.markdown("---")
 
-# 2. Geolocalización Automática
+# 2. Geolocalización Automática (CANDADO DE SEGURIDAD)
 st.subheader("2. Validación de Ubicación (GPS)")
-st.write("Haz clic en el botón para capturar las coordenadas exactas:")
+st.write("Es obligatorio capturar la ubicación satelital para continuar con el reporte.")
 
 ubicacion = streamlit_geolocation()
 gps_coordenadas = None
 
 if ubicacion['latitude'] is not None and ubicacion['longitude'] is not None:
-    # Convertimos las coordenadas en un enlace directo de Google Maps
+    # Convertimos de inmediato a enlace clickable de Google Maps
     gps_coordenadas = f"https://www.google.com/maps?q={ubicacion['latitude']},{ubicacion['longitude']}"
-    st.success("📍 Ubicación confirmada y convertida a enlace de mapa.")
+    st.success("📍 Ubicación satelital confirmada y vinculada al mapa.")
 else:
-    st.info("Esperando captura de GPS... (Recuerda dar permisos de ubicación en tu navegador)")
+    st.warning("⚠️ El GPS está apagado o esperando permisos. Activa la ubicación en tu celular para desbloquear la cámara.")
+    st.stop() # <--- CANDADO: Si no hay GPS, el código se congela aquí y no muestra lo de abajo.
 
 st.markdown("---")
 
 # 3. Evidencia Fotográfica y Registro de Hora Automático
 st.subheader("3. Evidencia y Registro de Tiempos")
-st.write("Al tomar la fotografía, el sistema registrará automáticamente la hora de llegada.")
+st.write(f"Al capturar la foto, se registrará la hora exacta para el hito: **{hito}**")
 
-if 'hora_llegada' not in st.session_state:
-    st.session_state['hora_llegada'] = None
-if 'hora_salida' not in st.session_state:
-    st.session_state['hora_salida'] = None
+if 'hora_registro' not in st.session_state:
+    st.session_state['hora_registro'] = None
 
-foto = st.camera_input("Capturar fotografía del avance o estado del sitio", key="camara_evidencia")
+foto = st.camera_input("Capturar fotografía de evidencia en sitio", key="camara_evidencia")
 
 if foto:
-    if st.session_state['hora_llegada'] is None:
-        st.session_state['hora_llegada'] = datetime.now().strftime("%H:%M:%S")
-    st.success(f"📸 Evidencia capturada. Hora de llegada registrada: {st.session_state['hora_llegada']}")
-
-st.markdown("---")
-
-# 4. Botón opcional de Salida
-st.write("¿Terminó el turno?")
-if st.button("🔴 Registrar Hora de Salida", use_container_width=True):
-    st.session_state['hora_salida'] = datetime.now().strftime("%H:%M:%S")
-    st.error(f"Salida registrada: {st.session_state['hora_salida']}")
+    if st.session_state['hora_registro'] is None:
+        st.session_state['hora_registro'] = datetime.now().strftime("%H:%M:%S")
+    st.success(f"📸 Foto capturada. Hora asignada al reporte: {st.session_state['hora_registro']}")
 
 st.markdown("---")
 
@@ -93,12 +92,12 @@ st.markdown("---")
 # PROCESAMIENTO Y ENVÍO DE DATOS
 # =====================================================================
 if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_container_width=True):
-    if not direccion or not foto or not st.session_state['hora_llegada'] or not gps_coordenadas:
-        st.warning("⚠️ Datos incompletos. Asegúrate de ingresar la dirección, tomar la foto y capturar el GPS.")
+    if not direccion or not foto or not st.session_state['hora_registro'] or not gps_coordenadas:
+        st.warning("⚠️ Datos incompletos. Asegúrate de escribir la dirección y capturar la fotografía.")
     else:
-        with st.spinner("Subiendo evidencia fotográfica y registrando datos..."):
+        with st.spinner("Subiendo evidencia y registrando hito en la base de datos..."):
             try:
-                # A. Subir la imagen a ImgBB mediante API
+                # A. Subir la imagen a ImgBB
                 foto_bytes = foto.getvalue()
                 foto_base64 = base64.b64encode(foto_bytes).decode('utf-8')
                 
@@ -119,19 +118,18 @@ if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_co
                     fecha_hoy,
                     cuadrilla,
                     direccion,
-                    st.session_state['hora_llegada'],
-                    st.session_state['hora_salida'] if st.session_state['hora_salida'] else "No registrada",
+                    hito,
+                    st.session_state['hora_registro'],
                     gps_coordenadas,
                     enlace_foto
                 ]
                 
                 hoja.append_row(fila_nueva)
                 
-                st.success("✅ ¡Reporte guardado exitosamente en el Centro de Gestión!")
+                st.success(f"✅ ¡Reporte de '{hito}' guardado exitosamente en el Centro de Gestión!")
                 
-                # Limpiar variables de tiempo para el próximo registro
-                st.session_state['hora_llegada'] = None
-                st.session_state['hora_salida'] = None
+                # Limpiar variable de tiempo para el próximo hito
+                st.session_state['hora_registro'] = None
                 
             except Exception as error:
                 st.error(f"Ocurrió un error al enviar el reporte: {error}")
