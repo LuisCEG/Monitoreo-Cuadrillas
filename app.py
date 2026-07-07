@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import requests
 import base64
 import gspread
@@ -10,8 +10,11 @@ from PIL.ExifTags import TAGS, GPSTAGS
 import io
 
 # =====================================================================
-# CONFIGURACIÓN Y CONEXIONES
+# CONFIGURACIÓN Y CONEXIONES (CON ZONA HORARIA DE COLOMBIA)
 # =====================================================================
+
+# Definimos la zona horaria de Colombia (UTC -5 horas)
+ZONA_COLOMBIA = timezone(timedelta(hours=-5))
 
 SPREADSHEET_ID = st.secrets["general"]["spreadsheet_id"]
 IMGBB_API_KEY = st.secrets["general"]["imgbb_api_key"]
@@ -114,7 +117,8 @@ if metodo_reporte == "En Vivo (Con señal)":
         foto = st.camera_input("Capturar fotografía de evidencia", key="camara_viva")
         if foto:
             foto_bytes = foto.getvalue()
-            hora_registro = datetime.now().strftime("%H:%M:%S")
+            # SE APLICA LA ZONA HORARIA DE COLOMBIA
+            hora_registro = datetime.now(ZONA_COLOMBIA).strftime("%H:%M:%S")
             st.success(f"📸 Foto en vivo capturada. Hora asignada: {hora_registro}")
     else:
         st.warning("⚠️ Activa el GPS para habilitar la cámara en vivo.")
@@ -156,9 +160,10 @@ if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_co
                 respuesta_api = requests.post(url_imgbb, data={"key": IMGBB_API_KEY, "image": foto_base64}).json()
                 enlace_foto = respuesta_api["data"]["url"]
                 
-                # B. Escribir en Sheets
+                # B. Escribir en Sheets (SE APLICA LA ZONA HORARIA DE COLOMBIA PARA LA FECHA)
                 hoja = gc.open_by_key(SPREADSHEET_ID).sheet1
-                fila_nueva = [datetime.now().strftime("%Y-%m-%d"), cuadrilla, direccion, hito, hora_registro, gps_coordenadas, enlace_foto]
+                fecha_colombia = datetime.now(ZONA_COLOMBIA).strftime("%Y-%m-%d")
+                fila_nueva = [fecha_colombia, cuadrilla, direccion, hito, hora_registro, gps_coordenadas, enlace_foto]
                 hoja.append_row(fila_nueva)
                 
                 st.success(f"✅ ¡Reporte guardado exitosamente!")
