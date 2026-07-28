@@ -13,7 +13,6 @@ import io
 # CONFIGURACIÓN Y CONEXIONES (CON ZONA HORARIA DE COLOMBIA)
 # =====================================================================
 
-# Definimos la zona horaria de Colombia (UTC -5 horas)
 ZONA_COLOMBIA = timezone(timedelta(hours=-5))
 
 SPREADSHEET_ID = st.secrets["general"]["spreadsheet_id"]
@@ -31,6 +30,30 @@ try:
 except Exception as e:
     st.error(f"Error técnico de conexión: {e}")
     st.stop()
+
+# =====================================================================
+# FUNCIÓN DE REGISTRO SILENCIOSO DE INTENTOS FALLIDOS (AUDITORÍA PMO)
+# =====================================================================
+
+def registrar_intento_fallido(cuadrilla, direccion, hito, metodo, motivo_falla):
+    """Registra de forma automática en una pestaña secundaria los bloqueos y errores de los técnicos."""
+    try:
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        # Intentar buscar la pestaña de errores, si no existe, la crea
+        try:
+            hoja_errores = sh.worksheet("Errores_Intentos")
+        except gspread.exceptions.WorksheetNotFound:
+            hoja_errores = sh.add_worksheet(title="Errores_Intentos", rows=100, cols=6)
+            hoja_errores.append_row(["Fecha", "Hora", "Cuadrilla", "Proyecto", "Hito / Metodo", "Motivo del Bloqueo"])
+
+        fecha_col = datetime.now(ZONA_COLOMBIA).strftime("%Y-%m-%d")
+        hora_col = datetime.now(ZONA_COLOMBIA).strftime("%H:%M:%S")
+        
+        fila_error = [fecha_col, hora_col, cuadrilla, direccion if direccion else "No especificada", f"{hito} ({metodo})", motivo_falla]
+        hoja_errores.append_row(fila_error)
+    except Exception:
+        # Si falla el registro secundario, no bloqueamos la app del usuario en campo
+        pass
 
 # =====================================================================
 # MOTOR DE EXTRACCIÓN EXIF (DETECTOR DE EXCUSAS)
@@ -93,7 +116,7 @@ cuadrilla = st.selectbox("Seleccione la Cuadrilla", [
 ])
 direccion = st.text_input("Proyecto / Dirección", placeholder="Ej: Proyecto Dosquebradas...")
 hito = st.selectbox("Seleccione el Hito Operativo", [
-    "🌅 Inicio de Jornada", "🥪 Salida a Almuerzo", "🔄 Regreso de Almuerzo", "🛑 Fin de Jornada"
+    "🌅 Inicio de Jornada", "🛑 Fin de Jornada"
 ])
 
 st.markdown("---")
@@ -117,14 +140,13 @@ if metodo_reporte == "En Vivo (Con señal)":
         foto = st.camera_input("Capturar fotografía de evidencia", key="camara_viva")
         if foto:
             foto_bytes = foto.getvalue()
-            # SE APLICA LA ZONA HORARIA DE COLOMBIA
             hora_registro = datetime.now(ZONA_COLOMBIA).strftime("%H:%M:%S")
             st.success(f"📸 Foto en vivo capturada. Hora asignada: {hora_registro}")
     else:
-        st.warning("⚠️ Activa el GPS para habilitar la cámara en vivo.")
+        st.warning("⚠️ Activa el GPS de tu celular para habilitar la cámara en vivo.")
 
 elif metodo_reporte == "Diferido (Tomé la foto sin señal)":
-    st.info("Sube la foto que tomaste con la cámara de tu celular. El sistema extraerá la hora y ubicación reales.")
+    st.info("Sube la foto que tomaste con la cámara nativa de tu celular. El sistema extraerá la hora y ubicación reales.")
     foto_subida = st.file_uploader("Seleccionar imagen de la galería", type=['jpg', 'jpeg', 'png'])
     
     if foto_subida:
@@ -135,13 +157,13 @@ elif metodo_reporte == "Diferido (Tomé la foto sin señal)":
             hora_registro = hora_extraida
             st.success(f"🕒 HORA DETECTADA EN LA FOTO: {hora_registro}")
         else:
-            st.error("❌ La foto no tiene registro de hora. (Posible captura de pantalla o imagen enviada por WhatsApp).")
+            st.error("❌ La foto no tiene registro de hora (Posible captura de pantalla o imagen de WhatsApp).")
             
         if gps_extraido:
             gps_coordenadas = gps_extraido
             st.success("📍 UBICACIÓN DETECTADA EN LA FOTO. Todo en orden.")
         else:
-            st.error("❌ La foto no tiene ubicación satelital. El técnico tenía el GPS apagado al momento de tomarla.")
+            st.error("❌ La foto no tiene ubicación satelital (GPS apagado al tomar la foto).")
 
 st.markdown("---")
 
@@ -149,8 +171,35 @@ st.markdown("---")
 # ENVÍO AL CENTRO DE GESTIÓN
 # =====================================================================
 if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_container_width=True):
-    if not direccion or not foto_bytes or not hora_registro or not gps_coordenadas:
-        st.warning("⚠️ El reporte está bloqueado. Faltan datos o la foto diferida no superó la auditoría del sistema (Sin GPS u Hora).")
+    # Verificaciones de bloqueo e intento fallido
+    motivos_falla = []
+    
+    if not direccion:
+        motivos_falla.append("Falta ingresar el proyecto o dirección.")
+    if not foto_bytes:
+        motivos_falla.append("No se adjuntó o capturó ninguna fotografía.")
+    
+    if metodo_reporte == "En Vivo (Con señal)":
+        if not gps_coordenadas:
+            motivos_falla.append("GPS inactivo o no autorizado en modo En Vivo.")
+        if not hora_registro and foto_bytes:
+            motivos_falla.append("Falta procesar la hora del servidor.")
+    elif metodo_reporte == "Diferido (Tomé la foto sin señal)":
+        hora_ext, gps_ext = extraer_metadatos_foto(foto_bytes) if foto_bytes else (None, None)
+        if not hora_ext:
+            motivos_falla.append("Foto diferida sin metadatos de hora (Posible captura o WhatsApp).")
+        if not gps_ext:
+            motivos_falla.append("Foto diferida sin coordenadas GPS (GPS apagado).")
+
+    if motivos_falla:
+        # CONSOLIDAR MOTIVO Y REGISTRAR EN LA HOJA DE ERRORES
+        motivo_completo = " | ".join(motivos_falla)
+        registrar_intento_fallido(cuadrilla, direccion, hito, metodo_reporte, motivo_completo)
+        
+        st.warning("⚠️ El reporte fue bloqueado por el sistema. Revisa que el GPS esté activo, que los datos estén completos y que uses la foto directa de la cámara.")
+        with st.expander("Ver detalle técnico del bloqueo"):
+            for m in motivos_falla:
+                st.write(f"- {m}")
     else:
         with st.spinner("Subiendo evidencia y registrando en la base de datos..."):
             try:
@@ -160,7 +209,7 @@ if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_co
                 respuesta_api = requests.post(url_imgbb, data={"key": IMGBB_API_KEY, "image": foto_base64}).json()
                 enlace_foto = respuesta_api["data"]["url"]
                 
-                # B. Escribir en Sheets (SE APLICA LA ZONA HORARIA DE COLOMBIA PARA LA FECHA)
+                # B. Escribir en Sheets Principal
                 hoja = gc.open_by_key(SPREADSHEET_ID).sheet1
                 fecha_colombia = datetime.now(ZONA_COLOMBIA).strftime("%Y-%m-%d")
                 fila_nueva = [fecha_colombia, cuadrilla, direccion, hito, hora_registro, gps_coordenadas, enlace_foto]
