@@ -39,7 +39,6 @@ def registrar_intento_fallido(cuadrilla, direccion, hito, metodo, motivo_falla):
     """Registra de forma automática en una pestaña secundaria los bloqueos y errores de los técnicos."""
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
-        # Intentar buscar la pestaña de errores, si no existe, la crea
         try:
             hoja_errores = sh.worksheet("Errores_Intentos")
         except gspread.exceptions.WorksheetNotFound:
@@ -52,7 +51,6 @@ def registrar_intento_fallido(cuadrilla, direccion, hito, metodo, motivo_falla):
         fila_error = [fecha_col, hora_col, cuadrilla, direccion if direccion else "No especificada", f"{hito} ({metodo})", motivo_falla]
         hoja_errores.append_row(fila_error)
     except Exception:
-        # Si falla el registro secundario, no bloqueamos la app del usuario en campo
         pass
 
 # =====================================================================
@@ -80,7 +78,6 @@ def extraer_metadatos_foto(image_bytes):
                     sub_tag = GPSTAGS.get(t, t)
                     gps_info[sub_tag] = value[t]
 
-        # Convertir coordenadas a formato Google Maps si existen
         coordenadas_mapa = None
         if gps_info and "GPSLatitude" in gps_info and "GPSLongitude" in gps_info:
             lat = gps_info["GPSLatitude"]
@@ -171,35 +168,36 @@ st.markdown("---")
 # ENVÍO AL CENTRO DE GESTIÓN
 # =====================================================================
 if st.button("🚀 Enviar Reporte al Centro de Gestión", type="primary", use_container_width=True):
-    # Verificaciones de bloqueo e intento fallido
     motivos_falla = []
     
     if not direccion:
         motivos_falla.append("Falta ingresar el proyecto o dirección.")
+    
     if not foto_bytes:
         motivos_falla.append("No se adjuntó o capturó ninguna fotografía.")
-    
-    if metodo_reporte == "En Vivo (Con señal)":
-        if not gps_coordenadas:
-            motivos_falla.append("GPS inactivo o no autorizado en modo En Vivo.")
-        if not hora_registro and foto_bytes:
-            motivos_falla.append("Falta procesar la hora del servidor.")
-    elif metodo_reporte == "Diferido (Tomé la foto sin señal)":
-        hora_ext, gps_ext = extraer_metadatos_foto(foto_bytes) if foto_bytes else (None, None)
-        if not hora_ext:
-            motivos_falla.append("Foto diferida sin metadatos de hora (Posible captura o WhatsApp).")
-        if not gps_ext:
-            motivos_falla.append("Foto diferida sin coordenadas GPS (GPS apagado).")
-
+    else:
+        hora_ext, gps_ext = extraer_metadatos_foto(foto_bytes)
+        
+        if metodo_reporte == "En Vivo (Con señal)":
+            if not gps_coordenadas:
+                motivos_falla.append("GPS del navegador inactivo o no autorizado.")
+        elif metodo_reporte == "Diferido (Tomé la foto sin señal)":
+            if not hora_ext:
+                motivos_falla.append("La foto no tiene hora válida (Es una captura de pantalla o imagen de WhatsApp).")
+            if not gps_ext:
+                motivos_falla.append("La foto no tiene coordenadas GPS (Tenías el GPS apagado al tomarla).")
+                
     if motivos_falla:
-        # CONSOLIDAR MOTIVO Y REGISTRAR EN LA HOJA DE ERRORES
         motivo_completo = " | ".join(motivos_falla)
+        # Registra en tu hoja de Google Sheets de forma silenciosa para que sepas quién intentó hacer trampa
         registrar_intento_fallido(cuadrilla, direccion, hito, metodo_reporte, motivo_completo)
         
-        st.warning("⚠️ El reporte fue bloqueado por el sistema. Revisa que el GPS esté activo, que los datos estén completos y que uses la foto directa de la cámara.")
-        with st.expander("Ver detalle técnico del bloqueo"):
-            for m in motivos_falla:
-                st.write(f"- {m}")
+        # ADVERTENCIA CLARA Y DIRECTA EN EL CELULAR DEL TÉCNICO
+        st.error("🚨 **REPORTE RECHAZADO POR EL SISTEMA DE AUDITORÍA**")
+        st.warning("El sistema ha detectado anomalías y ha registrado este intento fallido para revisión de la PMO:")
+        for m in motivos_falla:
+            st.markdown(f"👉 **{m}**")
+        st.info("💡 *Por favor corrige el error (activa tu GPS, escribe la dirección o toma una foto real con la cámara) para poder enviar el reporte.*")
     else:
         with st.spinner("Subiendo evidencia y registrando en la base de datos..."):
             try:
