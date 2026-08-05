@@ -1,9 +1,5 @@
 gspread
-
 google-auth
-
 requests
-
 streamlit-geolocation
-
 streamlit>=1.42.0
