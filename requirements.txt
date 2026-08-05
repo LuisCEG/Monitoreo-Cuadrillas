@@ -1,6 +1,9 @@
-starlette<0.45.0
 gspread
+
 google-auth
+
 requests
+
 streamlit-geolocation
+
 streamlit>=1.42.0
