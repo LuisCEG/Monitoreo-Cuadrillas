@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 import base64
 import gspread
+st.set_page_config(page_title="Centro de Gestión - Monitoreo", page_icon="👷‍♂️", layout="centered")
 from google.oauth2.service_account import Credentials
 from streamlit_geolocation import streamlit_geolocation
 from PIL import Image
@@ -101,7 +102,7 @@ def extraer_metadatos_foto(image_bytes):
 # INTERFAZ DE USUARIO
 # =====================================================================
 
-st.set_page_config(page_title="Centro de Gestión - Monitoreo", page_icon="👷‍♂️", layout="centered")
+
 st.title("Reporte de Operaciones en Campo 👷‍♂️")
 
 # 1. Datos Generales
