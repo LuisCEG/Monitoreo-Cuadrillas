@@ -1,4 +1,4 @@
-
+starlette<0.45.0
 gspread
 google-auth
 requests
